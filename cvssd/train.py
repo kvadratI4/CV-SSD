@@ -121,7 +121,13 @@ def main():
 
     tag = a.tag or f"{a.model}_{a.protocol}{a.fold}"
     run = os.path.join(a.out, tag)
-    os.makedirs(run, exist_ok=True)
+
+    try:
+        os.makedirs(run, exist_ok=False)
+    except Exception as e:
+        print(e)
+        return 
+
     json.dump({**vars(a), "n_params": n_par},
               open(os.path.join(run, "config.json"), "w"), indent=2)
 
