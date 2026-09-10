@@ -126,7 +126,35 @@ with torch.no_grad():
 assert e_a > 1e-3, "selection ablation had no effect"
 ok("selection='riparts' breaks equivariance as expected")
 
-# 10. can overfit one batch
+# 10. widely-linear variants
+kwx = dict(d_model=12, d_state=4, n_stages=2, blocks_per_stage=1)
+mw = SSDNet(complex_mode=True, wl="plain", **kwx).eval()
+mq = SSDNet(complex_mode=True, wl="eq", **kwx).eval()
+with torch.no_grad():
+    yw, _ = mw(x); yq, _ = mq(x)
+assert yw.shape == x.shape and torch.isfinite(yw).all()
+assert yq.shape == x.shape and torch.isfinite(yq).all()
+with torch.no_grad():
+    e_w = ((mw(rotate(x, th))[0] - rotate(mw(x)[0], th)).abs().max()
+           / mw(x)[0].abs().max())
+    e_q = ((mq(rotate(x, th))[0] - rotate(mq(x)[0], th)).abs().max()
+           / mq(x)[0].abs().max())
+assert e_w > 1e-3, "plain WL should break equivariance"
+assert e_q < 1e-4, f"pseudo-covariance WL should preserve it: {e_q:.2e}"
+ok(f"WL variants: plain breaks equivariance ({e_w:.1e}), "
+   f"pseudo-cov preserves it ({e_q:.1e})")
+
+# the equivariant WL branch must vanish on a proper (circular) signal
+from cvssd.complex_ops import pseudo_cov_ref  # noqa: E402
+
+zc = torch.randn(2, 64, 8, dtype=torch.cfloat)                  # circular
+zi = torch.randn(2, 64, 8).to(torch.cfloat)                     # real -> improper
+kc = pseudo_cov_ref(zc).abs().mean()
+ki = pseudo_cov_ref(zi).abs().mean()
+assert kc < 0.3 and ki > 0.7, (float(kc), float(ki))
+ok(f"pseudo_cov_ref self-gates: circular {kc:.2f} vs improper {ki:.2f}")
+
+# 11. can overfit one batch
 torch.manual_seed(0)
 m = SSDNet(d_model=16, d_state=4, n_stages=2, blocks_per_stage=1)
 xb = torch.randn(4, 2, 128)
