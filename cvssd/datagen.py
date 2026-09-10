@@ -173,6 +173,7 @@ def make_sample(
     cfo_max: float = 0.0,
     phase_linewidth: float = 0.0,
     pa_backoff_db: float | None = None,
+    phase_offset: bool = True,
     clean_mode: str = "rx",
 ):
     """Generate one paired (clean, noisy) example plus its metadata."""
@@ -196,6 +197,11 @@ def make_sample(
     y = apply_phase_noise(y, rng, phase_linewidth)
     if pa_backoff_db is not None:
         y = apply_saleh(y, pa_backoff_db)
+    # Unknown carrier phase. Without it a real-valued network can key on the
+    # absolute I/Q axes, which is not information a receiver actually has, and
+    # any complex-vs-real comparison is confounded.
+    if phase_offset:
+        y = y * np.exp(1j * rng.uniform(0, 2 * np.pi))
 
     p = np.sqrt(np.mean(np.abs(y) ** 2))
     y = y / p
@@ -276,13 +282,21 @@ if __name__ == "__main__":
     ap.add_argument("--cfo-max", type=float, default=0.0)
     ap.add_argument("--phase-linewidth", type=float, default=0.0)
     ap.add_argument("--pa-backoff-db", type=float, default=None)
+    ap.add_argument("--sps", type=int, default=8,
+                    help="samples per symbol; sps=2 leaves the matched filter "
+                         "only 3 dB of processing gain instead of 9 dB")
+    ap.add_argument("--n-sym", type=int, default=128)
+    ap.add_argument("--no-phase-offset", action="store_true")
     a = ap.parse_args()
     import os
 
     os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
     build_dataset(
-        a.out, n_per_cell=a.n_per_cell, seed=a.seed, multipath=a.multipath,
-        cfo_max=a.cfo_max, phase_linewidth=a.phase_linewidth,
-        pa_backoff_db=a.pa_backoff_db,
+        a.out, n_per_cell=a.n_per_cell, seed=a.seed, sps=a.sps, n_sym=a.n_sym,
+        multipath=a.multipath, cfo_max=a.cfo_max,
+        phase_linewidth=a.phase_linewidth, pa_backoff_db=a.pa_backoff_db,
+        phase_offset=not a.no_phase_offset,
     )
-    print("wrote", a.out)
+    import numpy as _np
+    print(f"wrote {a.out}: L={a.sps*a.n_sym} samples, sps={a.sps}, "
+          f"matched-filter gain {10*_np.log10(a.sps):.1f} dB")
