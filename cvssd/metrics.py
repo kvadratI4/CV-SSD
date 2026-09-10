@@ -41,8 +41,41 @@ def output_snr_db(clean: np.ndarray, est: np.ndarray) -> float:
 
 
 def snr_gain_db(clean: np.ndarray, noisy: np.ndarray, est: np.ndarray) -> float:
-    """Improvement in output SNR over the unprocessed input, in dB."""
+    """
+    Improvement in output SNR over the unprocessed input, in dB.
+
+    WARNING - this is the metric most papers report, and on its own it is
+    misleading. It rewards scalar shrinkage: at low input SNR the MSE-optimal
+    estimate is est ~ 0, which scores NMSE ~ 0 dB and therefore an apparent
+    "gain" equal to the input SNR, while conveying no information whatsoever.
+    Always report it next to excess_over_shrinkage_db and si_sdr_db.
+    """
     return output_snr_db(clean, est) - output_snr_db(clean, noisy)
+
+
+def si_sdr_db(clean: np.ndarray, est: np.ndarray) -> float:
+    """
+    Scale-invariant SDR. Projects out the optimal complex scalar before
+    measuring error, so uniform shrinkage or a global phase rotation earns
+    nothing. This is the honest waveform-domain figure, because the receiver's
+    gain correction makes the true system scale-invariant anyway.
+    """
+    a = np.vdot(est, clean) / (np.vdot(est, est).real + 1e-20)
+    proj = a * est
+    return float(10 * np.log10(
+        np.sum(np.abs(clean) ** 2) / (np.sum(np.abs(clean - proj) ** 2) + 1e-20)
+    ))
+
+
+def scalar_shrinkage_nmse_db(snr_db: float) -> float:
+    """
+    NMSE reachable by the best possible scalar estimator est = a * noisy,
+    a = SNR/(1+SNR). No network required. Any reported NMSE must be compared
+    against this floor, otherwise the number says nothing.
+    """
+    s = 10 ** (snr_db / 10.0)
+    a = s / (1 + s)
+    return float(10 * np.log10((1 - a) ** 2 + a ** 2 / s))
 
 
 # --------------------------------------------------------------------------
@@ -143,10 +176,16 @@ def evaluate_sample(
     symbols, sym_idx = symbols[sl], sym_idx[sl]
     e_est, t = ber(s_est, sym_idx, mod)
     e_noisy, _ = ber(s_noisy, sym_idx, mod)
+    snr_in = 10 * np.log10(
+        np.sum(np.abs(clean) ** 2) / (np.sum(np.abs(noisy - clean) ** 2) + 1e-20))
     return dict(
         nmse_db=nmse_db(clean, est),
         out_snr_db=output_snr_db(clean, est),
         snr_gain_db=snr_gain_db(clean, noisy, est),
+        si_sdr_db=si_sdr_db(clean, est),
+        si_sdr_db_noisy=si_sdr_db(clean, noisy),
+        excess_over_shrinkage_db=scalar_shrinkage_nmse_db(snr_in)
+                                 - nmse_db(clean, est),
         evm_pct=evm_percent(s_est, symbols),
         evm_pct_noisy=evm_percent(s_noisy, symbols),
         bit_errors=e_est, bit_errors_noisy=e_noisy, n_bits=t,
@@ -171,6 +210,11 @@ def aggregate(rows, keys=("mod", "snr_db")):
             n=len(rs),
             nmse_db=float(np.mean([r["nmse_db"] for r in rs])),
             snr_gain_db=float(np.mean([r["snr_gain_db"] for r in rs])),
+            si_sdr_db=float(np.mean([r["si_sdr_db"] for r in rs])),
+            si_sdr_gain_db=float(np.mean([r["si_sdr_db"] - r["si_sdr_db_noisy"]
+                                          for r in rs])),
+            excess_over_shrinkage_db=float(
+                np.mean([r["excess_over_shrinkage_db"] for r in rs])),
             evm_pct=float(np.mean([r["evm_pct"] for r in rs])),
             evm_pct_noisy=float(np.mean([r["evm_pct_noisy"] for r in rs])),
             ber=e / max(n, 1), ber_noisy=e0 / max(n, 1),
