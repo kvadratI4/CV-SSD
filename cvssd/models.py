@@ -78,6 +78,7 @@ class SSDNet(nn.Module):
         chunk: int = 64,
         widths=None,
         selection: str = "mag",
+        wl: str = "none",
     ):
         super().__init__()
         self.complex_mode = complex_mode
@@ -100,13 +101,13 @@ class SSDNet(nn.Module):
         self.down = nn.ModuleList()
         for i in range(n_stages):
             self.enc.append(nn.ModuleList([
-                SSMBlock(w[i], d_state, complex_mode, chunk, selection)
+                SSMBlock(w[i], d_state, complex_mode, chunk, selection, wl)
                 for _ in range(blocks_per_stage)
             ]))
             self.down.append(conv(w[i], w[i + 1], 4, stride=2, padding=1))
 
         self.mid = nn.ModuleList([
-            SSMBlock(w[n_stages], d_state, complex_mode, chunk, selection)
+            SSMBlock(w[n_stages], d_state, complex_mode, chunk, selection, wl)
             for _ in range(blocks_per_stage)
         ])
 
@@ -115,7 +116,7 @@ class SSDNet(nn.Module):
         for i in reversed(range(n_stages)):
             self.up.append(convT(w[i + 1], w[i], 4, stride=2, padding=1))
             self.dec.append(nn.ModuleList([
-                SSMBlock(w[i], d_state, complex_mode, chunk, selection)
+                SSMBlock(w[i], d_state, complex_mode, chunk, selection, wl)
                 for _ in range(blocks_per_stage)
             ]))
         # Additive, learnable skip weights instead of concatenation: keeps the
@@ -285,6 +286,9 @@ class BiLSTMDenoiser(nn.Module):
 MODELS = {
     "cvssd": lambda **kw: SSDNet(complex_mode=True, **kw),
     "rvssd": lambda **kw: SSDNet(complex_mode=False, **kw),
+    # widely-linear variants: the mechanism test for the properness finding
+    "cvssd_wl": lambda **kw: SSDNet(complex_mode=True, wl="plain", **kw),
+    "cvssd_wleq": lambda **kw: SSDNet(complex_mode=True, wl="eq", **kw),
     "dncnn": lambda **kw: DnCNN1D(),
     "unet": lambda **kw: UNet1D(),
     "dae": lambda **kw: ConvDAE(),

@@ -23,7 +23,7 @@ from torch.utils.data import DataLoader
 from cvssd.dataset import CompositeLoss, IQDenoiseDataset
 from cvssd.models import MODELS, count_params, matched_real_width
 from cvssd.splits import (check_no_leakage, group_and_snr_split, group_kfold,
-                          leave_one_snr_out)
+                     leave_one_snr_out)
 
 from tqdm import tqdm
 
@@ -71,10 +71,11 @@ def main():
     p.add_argument("--d-state", type=int, default=8)
     p.add_argument("--blocks", type=int, default=2)
     p.add_argument("--stages", type=int, default=3)
+    p.add_argument("--selection", default="mag", choices=["mag", "riparts"])
     p.add_argument("--match-params", type=int, default=None,
                    help="for rvssd: widen to match a complex model of this width")
     p.add_argument("--epochs", type=int, default=40)
-    p.add_argument("--batch-size", type=int, default=16)
+    p.add_argument("--batch-size", type=int, default=32)
     p.add_argument("--lr", type=float, default=3e-4)
     p.add_argument("--wd", type=float, default=0.01)
     p.add_argument("--w-phase", type=float, default=0.1)
@@ -98,12 +99,15 @@ def main():
 
     kw = dict(d_model=a.d_model, d_state=a.d_state, n_stages=a.stages,
               blocks_per_stage=a.blocks)
+    if a.model in ("cvssd", "cvssd_wl", "cvssd_wleq"):
+        kw["selection"] = a.selection
     if a.model == "rvssd" and a.match_params:
         d = matched_real_width(a.match_params, d_state=a.d_state,
                                n_stages=a.stages, blocks_per_stage=a.blocks)
         kw["d_model"] = d
         print(f"[match] real width {d} to match complex width {a.match_params}")
-    model = MODELS[a.model](**(kw if a.model in ("cvssd", "rvssd") else {}))
+    SSM_MODELS = ("cvssd", "rvssd", "cvssd_wl", "cvssd_wleq")
+    model = MODELS[a.model](**(kw if a.model in SSM_MODELS else {}))
     model = model.to(device)
     n_par = count_params(model)
     print(f"{a.model}: {n_par/1e6:.3f}M params | train {len(train_ds)} "

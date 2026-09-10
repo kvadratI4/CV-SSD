@@ -178,3 +178,49 @@ class ComplexSiLU(nn.Module):
     def forward(self, z):
         mag = torch.abs(z)
         return z * torch.sigmoid(mag).to(z.dtype)
+
+
+# --------------------------------------------------------------------------
+# widely-linear (conjugate-augmented) processing
+# --------------------------------------------------------------------------
+
+
+def pseudo_cov_ref(z: torch.Tensor, eps: float = 1e-6) -> torch.Tensor:
+    """
+    Normalised pseudo-covariance (complementary second moment) of z over time.
+
+        u = E_t[z^2] / E_t[|z|^2]        z: (B, L, D)  ->  u: (B, 1, D)
+
+    |u| is exactly the circularity coefficient: 0 for a proper (circular)
+    signal, 1 for a maximally improper one such as BPSK or PAM4. Under a global
+    rotation z -> exp(i*theta)z the numerator picks up exp(2i*theta) while the
+    denominator is invariant, so u -> exp(2i*theta) u.
+    """
+    num = (z * z).mean(dim=1, keepdim=True)
+    den = (z.real ** 2 + z.imag ** 2).mean(dim=1, keepdim=True) + eps
+    return num / den.to(num.dtype)
+
+
+def wl_branch(z: torch.Tensor, mode: str = "eq") -> torch.Tensor:
+    """
+    Conjugate branch of a widely-linear layer.
+
+    mode="plain":  conj(z).
+        Standard widely-linear processing. Optimal for improper signals
+        (Picinbono & Chevalier, IEEE TSP 1995) but *not* phase-equivariant,
+        since conj(z) -> exp(-i*theta) conj(z).
+
+    mode="eq":     conj(z) * u,  u = pseudo_cov_ref(z).
+        Pairing the conjugate with the pseudo-covariance restores equivariance:
+        exp(-i*theta) * exp(2i*theta) = exp(i*theta). The branch also
+        self-gates - it vanishes automatically for proper constellations, where
+        |u| = 0, and is only active where conjugation can actually help. The
+        phase reference is estimated from the signal itself, which is the
+        physically correct choice: a BPSK axis is unknown in absolute terms but
+        constant within a burst.
+    """
+    if mode == "plain":
+        return z.conj()
+    if mode == "eq":
+        return z.conj() * pseudo_cov_ref(z)
+    raise ValueError(f"unknown wl mode {mode!r}")

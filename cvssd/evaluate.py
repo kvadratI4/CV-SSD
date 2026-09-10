@@ -26,11 +26,12 @@ def load_model(ckpt_path, device):
     ck = torch.load(ckpt_path, map_location=device, weights_only=False)
     a, kw = ck["args"], ck.get("kw", {})
     name = a["model"]
+    SSM_MODELS = ("cvssd", "rvssd", "cvssd_wl", "cvssd_wleq")
     if name == "rvssd" and a.get("match_params"):
         kw["d_model"] = matched_real_width(
             a["match_params"], d_state=a["d_state"], n_stages=a["stages"],
             blocks_per_stage=a["blocks"])
-    model = MODELS[name](**(kw if name in ("cvssd", "rvssd") else {}))
+    model = MODELS[name](**(kw if name in SSM_MODELS else {}))
     model.load_state_dict(ck["model"])
     return model.to(device).eval(), ck, name
 
