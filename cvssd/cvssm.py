@@ -27,7 +27,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from cvssd.complex_ops import ComplexLinear, complex_flat, ComplexLayerNorm, ComplexSiLU
+from cvssd.complex_ops import ComplexLinear, complex_flat
+
 
 # --------------------------------------------------------------------------
 # scan
@@ -224,6 +225,7 @@ class FiLM(nn.Module):
 class SSMBlock(nn.Module):
     """
     Pre-norm SSM block with a gated branch, FiLM conditioning and residual.
+
     In complex mode the gate is deliberately *real* and computed from |h|. A
     complex gate would multiply two phase-equivariant quantities and produce
     exp(2i*theta) instead of exp(i*theta), silently destroying the equivariance
@@ -232,9 +234,10 @@ class SSMBlock(nn.Module):
     """
 
     def __init__(self, d_model, d_state=8, complex_mode=True, chunk=64,
-                selection: str = "mag"):
+                 selection: str = "mag", wl: str = "none"):
         super().__init__()
         self.complex_mode = complex_mode
+        self.wl = wl if complex_mode else "none"
         if complex_mode:
             from .complex_ops import ComplexLayerNorm
 
@@ -244,6 +247,10 @@ class SSMBlock(nn.Module):
             self.gate = nn.Linear(d_model, d_model)
             self.out = ComplexLinear(d_model, d_model, bias=False)
             self.act = nn.SiLU()
+            if self.wl != "none":
+                # conjugate (widely-linear) path, lets the block exploit
+                # signal improperness that strictly linear processing cannot
+                self.wl_proj = ComplexLinear(d_model, d_model, bias=False)
         else:
             self.norm = nn.LayerNorm(d_model)
             self.ssm = RVSelectiveSSM(d_model, d_state, chunk)
@@ -257,7 +264,12 @@ class SSMBlock(nn.Module):
         h = self.film(h, cond)
         if self.complex_mode:
             g = self.act(self.gate(torch.abs(h)))          # real, phase-invariant
-            h = self.ssm(h) * g.to(h.dtype)
+            y = self.ssm(h) * g.to(h.dtype)
+            if self.wl != "none":
+                from .complex_ops import wl_branch
+
+                y = y + self.wl_proj(wl_branch(h, self.wl))
+            h = y
         else:
             h = self.ssm(h) * self.act(self.gate(h))
         return z + self.out(h)
