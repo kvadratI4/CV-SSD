@@ -75,7 +75,7 @@ def main():
     p.add_argument("--match-params", type=int, default=None,
                    help="for rvssd: widen to match a complex model of this width")
     p.add_argument("--epochs", type=int, default=40)
-    p.add_argument("--batch-size", type=int, default=32)
+    p.add_argument("--batch-size", type=int, default=16)
     p.add_argument("--lr", type=float, default=3e-4)
     p.add_argument("--wd", type=float, default=0.01)
     p.add_argument("--w-phase", type=float, default=0.1)

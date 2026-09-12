@@ -26,8 +26,9 @@ Fix anything it reports before spending GPU hours.
 
 ```bash
 pip install -r requirements.txt
-python tests/test_core_numpy.py     # numeric core (numpy only)
-python tests/test_torch.py          # models — run this before training
+python tests/test_core_numpy.py          # numeric core (numpy only)
+python tests/test_equivariance_numpy.py  # equivariance, primitive by primitive
+python tests/test_torch.py               # models — run this before training
 ```
 
 ## Quickstart
@@ -45,6 +46,25 @@ python -m cvssd.train --data data/train.npz --model cvssd --protocol group --amp
 # 3. score it: per-SNR NMSE, SNR gain, EVM, BER
 python -m cvssd.evaluate --ckpt runs/cvssd_group0/best.pt --data data/test.npz
 ```
+
+## Findings so far (sps=8 arm, 3 seeds each)
+
+- Complex and its parameter-matched real twin (4.26M vs 4.28M, 0.37% apart) are
+  **indistinguishable in aggregate**: NMSE -11.220±0.074 vs -11.114±0.282 dB.
+- The difference splits **exactly along constellation circularity**: complex wins
+  on all four proper constellations (QPSK, 8PSK, 16QAM, 64QAM) and loses on both
+  improper ones (BPSK +2.65 pp EVM, PAM4 +1.53 pp, both >2 sd). A real-valued
+  network mixing I/Q is implicitly *widely linear*; strictly linear complex
+  processing is provably suboptimal for improper signals (Picinbono & Chevalier,
+  IEEE TSP 1995). Hence `wl="eq"` — see `RUN_PLAN.md` Priority 3.
+- Both models are **worse than the matched filter alone** on BER (+2.3%, +2.5%),
+  because at sps=8 the filter supplies 9 dB of processing gain for free. Hence
+  the sps=2 arm.
+- `snr_gain_db` rewards trivial shrinkage: feed the metric `est = a*noisy` and it
+  reports ~20 dB of "gain" at -20 dB input. Use `excess_over_shrinkage_db` and
+  `si_sdr_gain_db`, which both correctly report 0.00 for that estimator.
+
+See `RUN_PLAN.md` for what to run next and in what order.
 
 ## The experiment that decides whether you have a paper
 
@@ -73,9 +93,12 @@ ideal transmit waveform. Using the latter would fold equalisation into the
 denoising metric and make comparison against CNN/GAN baselines unfair. Switch
 with `clean_mode="tx"` if you want that ablation.
 
-**Phase equivariance.** Selection (Δ, B, C), the SNR head and FiLM all read
-magnitude only, and every complex layer is bias-free, so the model satisfies
-`f(e^{iθ}x) = e^{iθ}f(x)` exactly. Absolute carrier phase is nuisance information
+**Phase equivariance.** Selection (Δ, B, C), the SNR head, FiLM and the block
+gate all read magnitude only, and every complex layer is bias-free, so the model
+satisfies `f(e^{iθ}x) = e^{iθ}f(x)` exactly. The gate in particular must stay
+*real*: multiplying two complex equivariant branches yields `e^{2iθ}` and
+silently destroys the property (see `tests/test_equivariance_numpy.py`, which
+reproduces exactly that failure). Absolute carrier phase is nuisance information
 in RF; the network is structurally forbidden from keying on it. `tests/test_torch.py`
 verifies this numerically, the real twin provably lacks it, and
 `--selection riparts` ablates it. This is a stronger theoretical claim than
@@ -161,6 +184,6 @@ cvssd/
   dataset.py        loader + composite loss (waveform, phase, spectral, SNR)
   train.py          leakage-controlled training
   evaluate.py       per-SNR metric tables
-tests/              numpy core suite (passing) + torch suite (run first)
+tests/              numpy core + equivariance suites (passing), torch suite
 experiments/        ablation driver
 ```
